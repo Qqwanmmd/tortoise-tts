@@ -331,6 +331,7 @@ class UnifiedVoice(nn.Module):
         self.mel_length_compression = mel_length_compression
         self.conditioning_encoder = ConditioningEncoder(80, model_dim, num_attn_heads=heads)
         self.text_embedding = nn.Embedding(self.number_text_tokens*types+1, model_dim)
+        self.accent_embedding = nn.Embedding(self.number_text_tokens*types+1, model_dim)
         if use_mel_codes_as_input:
             self.mel_embedding = nn.Embedding(self.number_mel_codes, model_dim)
         else:
@@ -515,7 +516,28 @@ class UnifiedVoice(nn.Module):
 
         text_inputs = F.pad(text_inputs, (0, 1), value=self.stop_text_token)
         text_inputs, _ = self.build_aligned_inputs_and_targets(text_inputs, self.start_text_token, self.stop_text_token)
-        text_emb = self.text_embedding(text_inputs) + self.text_pos_embedding(text_inputs)
+        # 创建一个新列表，用于存储重音标记序列
+        accent_marks = []
+        # 初始化一个标志变量，用于跟踪两个连续的 10 即找到”/a/"
+        found_first_10 = False
+        # 遍历原始列表
+        for row in text_inputs:
+            for item in row:
+                    if item == 10:
+                        if found_first_10:
+                            # 如果已经找到第一个 10，将标志变量重置为 False
+                            found_first_10 = False
+                        else:
+                            found_first_10 = True  # 找到第一个 10
+                    elif found_first_10:
+                        # 如果在两个 10 之间，将元素置为 1
+                       accent_marks.append(1)
+                    else:
+                       accent_marks.append(0)
+        accent_marks=torch.IntTensor(accent_marks).unsqueeze(0).to(self.device)
+        new_tokens = [[item for item in row if item != 10] for row in text_tokens]
+        text_inputs = torch.tensor(new_tokens).to(self.device)
+        text_emb = self.text_embedding(text_inputs) + self.text_pos_embedding(text_inputs)+accent_embedding(accent_marks)
 
         conds = speech_conditioning_latent.unsqueeze(1)
         emb = torch.cat([conds, text_emb], dim=1)
